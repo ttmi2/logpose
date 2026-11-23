@@ -1,0 +1,59 @@
+# 저장소 맨 위의 zip 파일(하나만)을 풀어서 사이트를 만들어요.
+# zip 을 새로 올리면(같은 이름으로 덮어쓰거나, 옛 zip 을 지우고 새 zip 을 올리면) 1~2분 뒤 사이트가 바뀌어요.
+# config.json 을 저장소 맨 위에 만들어 두면 빌드할 때 같이 넣어요 (Supabase · GA4 설정).
+name: 사이트 배포
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: zip 풀기
+        run: |
+          N=$(ls -1 *.zip 2>/dev/null | wc -l)
+          if [ "$N" != "1" ]; then echo "::error::저장소 맨 위에 zip 파일이 딱 하나만 있어야 해요 (지금 $N개)"; exit 1; fi
+          ZIP=$(ls -1 *.zip)
+          echo "사용할 zip: $ZIP"
+          mkdir src && unzip -q "$ZIP" -d src
+          APP=$(dirname "$(find src -name build.py | head -n 1)")
+          if [ -z "$APP" ] || [ "$APP" = "." ]; then echo "::error::zip 안에서 build.py 를 찾지 못했어요"; exit 1; fi
+          if [ -f config.json ]; then cp config.json "$APP/config.json"; echo "config.json 넣음"; fi
+          echo "APP=$APP" >> "$GITHUB_ENV"
+      - name: 빌드 (데이터 점검 포함)
+        run: |
+          cd "$APP"
+          python3 build.py
+          cp dist/logpose.html dist/index.html
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ env.APP }}/dist
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
